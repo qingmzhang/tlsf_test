@@ -4,7 +4,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "../src/tlsf/tlsf.h"
+#include "../src/tlsf.h"
 
 #define TEST_POOL_SIZE 32 * 1024 * 1024 
 #define NUM_ALLOCATIONS 1500
@@ -144,7 +144,7 @@ int test_fragmentation() {
 
     // 打印内存使用状态
     //tlsf_print_memory_status(tlsf);
-    //print_free_blocks(tlsf);
+    print_free_blocks(tlsf);
     // 获取空闲内存信息
     FreeMemoryInfo free_info;
     tlsf_get_free_info(tlsf, &free_info);
