@@ -10,8 +10,9 @@ set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g")
 
 # 添加源文件目录
 add_subdirectory(src)
-
+add_subdirectory(external/sdl2)
 # 添加测试可执行文件
 add_executable(test_tlsf test/test_tlsf.c)
 # 链接 tlsf 库
 target_link_libraries(test_tlsf tlsf)
+target_link_libraries(test_tlsf SDL2)
