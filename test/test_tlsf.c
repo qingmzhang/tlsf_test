@@ -6,71 +6,19 @@
 
 #include "../src/tlsf.h"
 
-#define TEST_POOL_SIZE 32 * 1024 * 1024 
-#define NUM_ALLOCATIONS 1500
-#define RETAIN_PERCENTAGE 70
+#define TEST_POOL_SIZE 64 * 1024 * 1024 
+#define NUM_ALLOCATIONS 1000
+#define RETAIN_PERCENTAGE 60
 #define NUM_LOOPS 10
+#define OUTER_NUM_LOOPS 10000
 
-#define PROB_4KB_OR_LESS 0.80
-#define PROB_4KB_TO_40KB (1 - PROB_4KB_OR_LESS - PROB_ABOVE_40KB)
-#define PROB_ABOVE_40KB 0.005
-
-
-
-int test_basic_malloc_free() {
-    tlsf_t tlsf = tlsf_create_with_pool(malloc(TEST_POOL_SIZE), TEST_POOL_SIZE);
-    void *ptr = tlsf_malloc(tlsf, 128);
-    if (!ptr) {
-        printf("Failed to allocate memory.\n");
-        return 1;
-    }
-    tlsf_free(tlsf, ptr);
-    printf("Basic malloc/free test passed.\n");
-    tlsf_destroy(tlsf);
-    return 0;
-}
-
-int test_memalign() {
-    tlsf_t tlsf = tlsf_create_with_pool(malloc(TEST_POOL_SIZE), TEST_POOL_SIZE);
-    void *ptr = tlsf_memalign(tlsf, 16, 256);
-    if (!ptr) {
-        printf("Failed to allocate aligned memory.\n");
-        return 1;
-    }
-    if (((uintptr_t)ptr) % 16 != 0) {
-        printf("Memory is not aligned properly.\n");
-        tlsf_free(tlsf, ptr);
-        tlsf_destroy(tlsf);
-        return 1;
-    }
-    tlsf_free(tlsf, ptr);
-    printf("Memalign test passed.\n");
-    tlsf_destroy(tlsf);
-    return 0;
-}
-
-int test_realloc() {
-    tlsf_t tlsf = tlsf_create_with_pool(malloc(TEST_POOL_SIZE), TEST_POOL_SIZE);
-    void *ptr = tlsf_malloc(tlsf, 128);
-    if (!ptr) {
-        printf("Failed to allocate memory.\n");
-        return 1;
-    }
-    ptr = tlsf_realloc(tlsf, ptr, 256);
-    if (!ptr) {
-        printf("Failed to reallocate memory.\n");
-        tlsf_free(tlsf, ptr);
-        return 1;
-    }
-    tlsf_free(tlsf, ptr);
-    printf("Realloc test passed.\n");
-    tlsf_destroy(tlsf);
-    return 0;
-}
+#define PROB_4KB_OR_LESS 0.95
+#define PROB_ABOVE_80KB 0.003
+#define PROB_4KB_TO_80KB (1 - PROB_4KB_OR_LESS - PROB_ABOVE_80KB)
 
 void *ptrs[NUM_LOOPS][NUM_ALLOCATIONS] = {0}; 
 size_t sizes[NUM_LOOPS][NUM_ALLOCATIONS] = {0}; 
-
+static double min_fragment_ratio = 1 ;
 int test_fragmentation() {
     tlsf_t tlsf = tlsf_create_with_pool(malloc(TEST_POOL_SIZE), TEST_POOL_SIZE);
     if (!tlsf) {
@@ -82,39 +30,45 @@ int test_fragmentation() {
     size_t total_allocated = 0;
 
 
+    for (int out_loop = 0; out_loop < OUTER_NUM_LOOPS; ++out_loop) {
+        for (int loop = 0; loop < NUM_LOOPS; ++loop) {
+            //printf("\nLoop %d:\n", loop + 1);
 
-    for (int loop = 0; loop < NUM_LOOPS; ++loop) {
-        //printf("\nLoop %d:\n", loop + 1);
-
-        for (int step = 0; step < NUM_ALLOCATIONS; ++step) {
-            if (rand() % 100 < 30) { 
-                //size_t alloc_size = (rand() % 4096) + 256;
-                double prob = (double)rand() / RAND_MAX; // 生成一个0到1之间的随机数
-                size_t alloc_size = 0;
-                if (prob < PROB_4KB_OR_LESS) {
-                    alloc_size = (rand() % 4096) + 256; // 256B到4KB
-                } else if (prob < PROB_4KB_OR_LESS + PROB_4KB_TO_40KB) {
-                    alloc_size = (rand() % (40000 - 4096)) + 4096; // 4KB到40KB
-                } else {
-                    alloc_size = (rand() % (450 * 1024 - 40000)) + 40000; // 40KB到450KB
-                }
-                ptrs[loop][step] = tlsf_malloc(tlsf, alloc_size);
-                if (!ptrs[loop][step]) {
-                    fprintf(stderr, "Failed to allocate memory.\n");
-                    return 1;
-                }
-                sizes[loop][step] = alloc_size;
-                total_allocated += alloc_size;
-                //printf("Allocated: %zu bytes at %p\n", alloc_size, ptrs[loop][step]);
-            } else { 
-                int release_loop = rand() % (loop + 1);
-                int release_step = rand() % (step + 1);
-                if (ptrs[release_loop][release_step]) {
-                    size_t freed_size = sizes[release_loop][release_step];
-                    tlsf_free(tlsf, ptrs[release_loop][release_step]);
-                    total_allocated -= freed_size;
-                    //printf("Freed: %zu bytes at %p\n", freed_size, ptrs[release_loop][release_step]);
-                    ptrs[release_loop][release_step] = NULL; 
+            for (int step = 0; step < NUM_ALLOCATIONS; ++step) {
+                if (rand() % 100 < 70) { 
+                    //size_t alloc_size = (rand() % 4096) + 256;
+                    double prob = (double)rand() / RAND_MAX; // 生成一个0到1之间的随机数
+                    size_t alloc_size = 0;
+                    if (prob < PROB_4KB_OR_LESS) {
+                        alloc_size = (rand() % 4096) + 512; // 256B到4KB
+                    } else if (prob < PROB_4KB_OR_LESS + PROB_4KB_TO_80KB) {
+                        alloc_size = (rand() % (80000 - 4096)) + 4096; 
+                    } else {
+                        alloc_size = (rand() % (450 * 1024 - 80000)) + 80000; 
+                    }
+                    // 检查是否已经有分配的内存，如果有，则先释放
+                    if (ptrs[loop][step]) {
+                        tlsf_free(tlsf, ptrs[loop][step]);
+                        ptrs[loop][step] = NULL;
+                    }
+                    ptrs[loop][step] = tlsf_malloc(tlsf, alloc_size);
+                    if (!ptrs[loop][step]) {
+                        fprintf(stderr, "Failed to allocate memory.\n");
+                        return 1;
+                    }
+                    sizes[loop][step] = alloc_size;
+                    total_allocated += alloc_size;
+                    //printf("Allocated: %zu bytes at %p\n", alloc_size, ptrs[loop][step]);
+                } else { 
+                    int release_loop = rand() % (loop + 1);
+                    int release_step = rand() % (step + 1);
+                    if (ptrs[release_loop][release_step]) {
+                        size_t freed_size = sizes[release_loop][release_step];
+                        tlsf_free(tlsf, ptrs[release_loop][release_step]);
+                        total_allocated -= freed_size;
+                        //printf("Freed: %zu bytes at %p\n", freed_size, ptrs[release_loop][release_step]);
+                        ptrs[release_loop][release_step] = NULL; 
+                    }
                 }
             }
         }
@@ -138,13 +92,14 @@ int test_fragmentation() {
                 size_t freed_size = sizes[loop][i];
                 tlsf_free(tlsf, ptrs[loop][i]);
                 total_allocated -= freed_size;
+                ptrs[loop][i] = NULL;
             }
         }
     }
 
     // 打印内存使用状态
     //tlsf_print_memory_status(tlsf);
-    print_free_blocks(tlsf);
+    //print_free_blocks(tlsf);
     // 获取空闲内存信息
     FreeMemoryInfo free_info;
     tlsf_get_free_info(tlsf, &free_info);
@@ -152,6 +107,11 @@ int test_fragmentation() {
     printf("Total allocated: %zu bytes\n", total_allocated);
     printf("Max free block: %zu bytes\n", free_info.max_free_block);
     printf("Total free: %zu bytes\n", free_info.total_free);
+    double fragment_ratio = (double)free_info.max_free_block / free_info.total_free;
+    if(min_fragment_ratio > fragment_ratio) {
+        min_fragment_ratio = fragment_ratio;
+    }
+    printf("Fragment ratio: %f\n", fragment_ratio);
 
     tlsf_destroy(tlsf);
     free(malloc(TEST_POOL_SIZE));
@@ -161,7 +121,7 @@ int test_fragmentation() {
 
 
 int main() {
-    const int num_tests = 100; // 定义要运行测试的次数
+    const int num_tests = 10; // 定义要运行测试的次数
     for (int i = 0; i < num_tests; ++i) {
         printf("Running test_fragmentation: %d/%d\n", i + 1, num_tests);
         if (test_fragmentation() != 0) {
@@ -171,5 +131,6 @@ int main() {
         sleep(1);
     }
     printf("All tests passed.\n");
+    printf("Minimal fragment ratio: %f\n", min_fragment_ratio);
     return 0;
 }
